@@ -1,5 +1,6 @@
 import db from "../storage/db";
 import authService from "../auth/authService";
+import notificationService from "./notificationService";
 
 class PostService {
   createPost(content, image = null) {
@@ -14,7 +15,12 @@ class PostService {
       comments: [],
     };
 
-    return db.create("posts", newPost);
+    const createdPost = db.create("posts", newPost);
+
+    // Notify followers about new post
+    notificationService.notifyNewPost(user.id);
+
+    return createdPost;
   }
 
   getAllPosts() {
@@ -99,7 +105,6 @@ class PostService {
     const post = db.getById("posts", postId);
     if (!post) throw new Error("Post not found");
 
-    // Ensure likes array exists
     if (!post.likes) {
       post.likes = [];
     }
@@ -109,6 +114,8 @@ class PostService {
 
     if (userIndex === -1) {
       likes.push(user.id);
+      // Send notification for like
+      notificationService.notifyLike(user.id, postId);
     } else {
       likes.splice(userIndex, 1);
     }
@@ -147,12 +154,14 @@ class PostService {
       content,
     });
 
-    // Update post's comment array
     if (!post.comments) {
       post.comments = [];
     }
     const updatedComments = [...post.comments, comment.id];
     db.update("posts", postId, { comments: updatedComments });
+
+    // Send notification for comment
+    notificationService.notifyComment(user.id, postId, comment.id);
 
     return comment;
   }

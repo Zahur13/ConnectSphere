@@ -1,5 +1,6 @@
 import db from "../storage/db";
 import authService from "../auth/authService";
+import notificationService from "./notificationService";
 
 class UserService {
   getAllUsers() {
@@ -7,18 +8,39 @@ class UserService {
   }
 
   getUserByUsername(username) {
-    const user = db.findOne("users", (u) => u.username === username);
-    if (!user) return null;
+    if (!username) return null;
+
+    // Get all users from localStorage
+    const users = db.getAll("users");
+
+    // Find user by username (case-insensitive)
+    const user = users.find(
+      (u) => u.username && u.username.toLowerCase() === username.toLowerCase()
+    );
+
+    if (!user) {
+      console.error("User not found with username:", username);
+      return null;
+    }
+
     return this.enrichUserData(authService.sanitizeUser(user));
   }
 
   getUserById(userId) {
+    if (!userId) return null;
+
     const user = db.getById("users", userId);
-    if (!user) return null;
+    if (!user) {
+      console.error("User not found with id:", userId);
+      return null;
+    }
+
     return this.enrichUserData(authService.sanitizeUser(user));
   }
 
   enrichUserData(user) {
+    if (!user) return null;
+
     const posts = db.filter("posts", (p) => p.userId === user.id);
 
     // Ensure arrays exist
@@ -62,10 +84,8 @@ class UserService {
     const targetUser = db.getById("users", targetUserId);
     if (!targetUser) throw new Error("User not found");
 
-    // Get fresh data from DB
     const currentUserData = db.getById("users", currentUser.id);
 
-    // Initialize arrays if they don't exist
     if (!currentUserData.following) currentUserData.following = [];
     if (!targetUser.followers) targetUser.followers = [];
 
@@ -79,23 +99,24 @@ class UserService {
       // Follow
       following.push(targetUserId);
       followers.push(currentUser.id);
+
+      // Send notification for follow
+      notificationService.notifyFollow(currentUser.id, targetUserId);
     } else {
       // Unfollow
       following.splice(followIndex, 1);
       followers.splice(followerIndex, 1);
     }
 
-    // Update both users in database
     const updatedCurrentUser = db.update("users", currentUser.id, {
       following,
     });
     const updatedTargetUser = db.update("users", targetUserId, { followers });
 
-    // Update current user in auth service
     const sanitizedUser = authService.sanitizeUser(updatedCurrentUser);
     localStorage.setItem("current_user", JSON.stringify(sanitizedUser));
 
-    return followIndex === -1; // Return true if followed, false if unfollowed
+    return followIndex === -1;
   }
 
   isFollowing(targetUserId) {
@@ -110,16 +131,26 @@ class UserService {
   }
 
   searchUsers(query) {
+    if (!query || !query.trim()) return [];
+
     const users = db.getAll("users");
-    const searchTerm = query.toLowerCase();
+    const currentUser = authService.getCurrentUser();
+    const searchTerm = query.toLowerCase().trim();
 
     return users
-      .filter(
-        (user) =>
-          user.username.toLowerCase().includes(searchTerm) ||
-          user.name.toLowerCase().includes(searchTerm)
-      )
-      .map((user) => authService.sanitizeUser(user));
+      .filter((user) => {
+        // Don't show current user in search results
+        if (currentUser && user.id === currentUser.id) return false;
+
+        // Search by name or username
+        return (
+          (user.username && user.username.toLowerCase().includes(searchTerm)) ||
+          (user.name && user.name.toLowerCase().includes(searchTerm)) ||
+          (user.email && user.email.toLowerCase().includes(searchTerm))
+        );
+      })
+      .map((user) => authService.sanitizeUser(user))
+      .slice(0, 10); // Limit to 10 results
   }
 }
 
